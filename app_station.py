@@ -34,7 +34,7 @@ horizon_to_year = {"Horizon30":2030,"Horizon50":2050,"Horizon100":2080}
 def load_meteo(deps, start_year=1980):
     dfs = []
 
-    zip_path = "Data_input/METEO/MENSUELLE/MENSQ_1950-2023.zip"
+    zip_path = "Data_input/METEO/MENSUELLE/MENSQ_dep.zip"
 
     # Colonnes de jours de pluie/neige
     nbj_cols = ['NBJRR1','NBJRR5','NBJRR10','NBJRR30','NBJRR50','NBJNEIG']
