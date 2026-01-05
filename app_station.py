@@ -207,7 +207,10 @@ drias_all = load_drias(deps,horizons,scenarios,drias_dir)
 # =====================================================
 # 3️⃣ Géopandas : Stations + DRIAS + Départements
 # =====================================================
-gdf_dep = gpd.read_file(r"C:\Users\MarcLeMoing\OneDrive - AUDAP\Documents\projets\Obsudaq\Data_input\CARTO\DONNEES_DEP\dep.gpkg")
+dep_path = Path("Data_input") / "CARTO" / "DONNEES_DEP" / "dep.gpkg"
+
+gdf_dep = gpd.read_file(dep_path)
+
 fr_cible = gdf_dep[gdf_dep['code_insee_du_departement'].astype(str).isin(deps)]
 
 gdf_drias = gpd.GeoDataFrame(
