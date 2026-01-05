@@ -1,6 +1,7 @@
 # =====================================================
 # IMPORTS
 # =====================================================
+import zipfile
 import pandas as pd
 import numpy as np
 import geopandas as gpd
@@ -32,92 +33,132 @@ horizon_to_year = {"Horizon30":2030,"Horizon50":2050,"Horizon100":2080}
 # =====================================================
 def load_meteo(deps, start_year=1980):
     dfs = []
+
+    zip_path = "Data_input/METEO/MENSUELLE/MENSQ_1950-2023.zip"
+
     # Colonnes de jours de pluie/neige
     nbj_cols = ['NBJRR1','NBJRR5','NBJRR10','NBJRR30','NBJRR50','NBJNEIG']
-    # Colonnes de température à traiter
+    # Colonnes de température
     temp_mean_cols = ['TX','TN','TM']
     temp_max_cols = ['TXAB']
     temp_sum_cols = ['NBJTX35','NBJTNS20','NBJTN5']
-    
-    for dep in deps:
-        path = f"Data_input/METEO/MENSUELLE/MENSQ_{dep}_1950-2023.csv"
-        df = pd.read_csv(path, sep=';')
-        df['DEP'] = dep
-        df['AAAAMM'] = df['AAAAMM'].astype(str)
-        df['ANNEE'] = df['AAAAMM'].str[:4].astype(int)
-        df['MOIS'] = df['AAAAMM'].str[4:6].astype(int)
-        df = df[df['ANNEE'] >= start_year]
-        dfs.append(df)
-    
+
+    with zipfile.ZipFile(zip_path) as z:
+        for dep in deps:
+            # chercher le bon CSV dans le zip
+            matches = [
+                name for name in z.namelist()
+                if name.endswith(".csv") and f"_{dep}_" in name
+            ]
+
+            if not matches:
+                print(f"⚠️ Département {dep} absent du ZIP METEO")
+                continue
+
+            csv_name = matches[0]
+
+            with z.open(csv_name) as f:
+                df = pd.read_csv(f, sep=';')
+
+            df['DEP'] = dep
+            df['AAAAMM'] = df['AAAAMM'].astype(str)
+            df['ANNEE'] = df['AAAAMM'].str[:4].astype(int)
+            df['MOIS'] = df['AAAAMM'].str[4:6].astype(int)
+            df = df[df['ANNEE'] >= start_year]
+
+            dfs.append(df)
+
+    if not dfs:
+        raise FileNotFoundError("Aucune donnée METEO chargée")
+
     meteo = pd.concat(dfs, ignore_index=True)
-    
-    # Initialiser un dict pour stocker les agrégations
+
+    # =====================================================
+    # AGRÉGATIONS ANNUELLES (INCHANGÉ)
+    # =====================================================
     annual_parts = {}
-    
-    # Cumul annuel précipitations
+
     if 'RR' in meteo.columns:
-        annual_parts['prec'] = meteo.groupby(['DEP','NUM_POSTE','NOM_USUEL','LAT','LON','ANNEE'])['RR'].sum().reset_index()
-        annual_parts['prec'].rename(columns={'RR':'cumul_prec_mm'}, inplace=True)
+        annual_parts['prec'] = (
+            meteo.groupby(['DEP','NUM_POSTE','NOM_USUEL','LAT','LON','ANNEE'])['RR']
+            .sum().reset_index()
+            .rename(columns={'RR':'cumul_prec_mm'})
+        )
     else:
         annual_parts['prec'] = pd.DataFrame()
-    
-    # Jours de pluie/neige
+
     nbj_existing = [c for c in nbj_cols if c in meteo.columns]
     if nbj_existing:
-        annual_parts['days'] = meteo.groupby(['DEP','NUM_POSTE','NOM_USUEL','LAT','LON','ANNEE'])[nbj_existing].sum().reset_index()
+        annual_parts['days'] = (
+            meteo.groupby(['DEP','NUM_POSTE','NOM_USUEL','LAT','LON','ANNEE'])[nbj_existing]
+            .sum().reset_index()
+        )
     else:
         annual_parts['days'] = pd.DataFrame()
-    
-    # Températures moyennes
+
     temp_mean_existing = [c for c in temp_mean_cols if c in meteo.columns]
     if temp_mean_existing:
-        annual_parts['temp_mean'] = meteo.groupby(['DEP','NUM_POSTE','NOM_USUEL','LAT','LON','ANNEE'])[temp_mean_existing].mean().reset_index()
+        annual_parts['temp_mean'] = (
+            meteo.groupby(['DEP','NUM_POSTE','NOM_USUEL','LAT','LON','ANNEE'])[temp_mean_existing]
+            .mean().reset_index()
+        )
     else:
         annual_parts['temp_mean'] = pd.DataFrame()
-    
-    # TXAB max
+
     temp_max_existing = [c for c in temp_max_cols if c in meteo.columns]
     if temp_max_existing:
-        annual_parts['txab'] = meteo.groupby(['DEP','NUM_POSTE','NOM_USUEL','LAT','LON','ANNEE'])[temp_max_existing].max().reset_index()
+        annual_parts['txab'] = (
+            meteo.groupby(['DEP','NUM_POSTE','NOM_USUEL','LAT','LON','ANNEE'])[temp_max_existing]
+            .max().reset_index()
+        )
     else:
         annual_parts['txab'] = pd.DataFrame()
-    
-    # Jours chauds/froids
+
     temp_sum_existing = [c for c in temp_sum_cols if c in meteo.columns]
     if temp_sum_existing:
-        annual_parts['temp_sum'] = meteo.groupby(['DEP','NUM_POSTE','NOM_USUEL','LAT','LON','ANNEE'])[temp_sum_existing].sum().reset_index()
+        annual_parts['temp_sum'] = (
+            meteo.groupby(['DEP','NUM_POSTE','NOM_USUEL','LAT','LON','ANNEE'])[temp_sum_existing]
+            .sum().reset_index()
+        )
     else:
         annual_parts['temp_sum'] = pd.DataFrame()
-    
-    # Merge cumulatif de toutes les parties
+
     annual = None
     for part in ['prec','days','temp_mean','txab','temp_sum']:
         df_part = annual_parts[part]
         if df_part.empty:
             continue
-        if annual is None:
-            annual = df_part
-        else:
-            annual = annual.merge(df_part, on=['DEP','NUM_POSTE','NOM_USUEL','LAT','LON','ANNEE'], how='outer')
-    
-    # Record RRAB
+        annual = df_part if annual is None else annual.merge(
+            df_part,
+            on=['DEP','NUM_POSTE','NOM_USUEL','LAT','LON','ANNEE'],
+            how='outer'
+        )
+
     if 'RRAB' in meteo.columns:
-        annual_rrab = meteo.groupby(['DEP','NUM_POSTE','NOM_USUEL','LAT','LON','ANNEE'])['RRAB'].max().reset_index()
-        annual_rrab.rename(columns={'RRAB':'record_rrab_mm'}, inplace=True)
-        annual = annual.merge(annual_rrab, on=['DEP','NUM_POSTE','NOM_USUEL','LAT','LON','ANNEE'], how='left')
-    
-    # Jours sans pluie/neige
-    annual['jours_par_an'] = annual['ANNEE'].apply(lambda y: 366 if calendar.isleap(y) else 365)
+        annual_rrab = (
+            meteo.groupby(['DEP','NUM_POSTE','NOM_USUEL','LAT','LON','ANNEE'])['RRAB']
+            .max().reset_index()
+            .rename(columns={'RRAB':'record_rrab_mm'})
+        )
+        annual = annual.merge(
+            annual_rrab,
+            on=['DEP','NUM_POSTE','NOM_USUEL','LAT','LON','ANNEE'],
+            how='left'
+        )
+
+    annual['jours_par_an'] = annual['ANNEE'].apply(
+        lambda y: 366 if calendar.isleap(y) else 365
+    )
     for col in nbj_existing:
         annual[f'jours_sans_{col}'] = annual['jours_par_an'] - annual[col]
-    
-    # Filtrer stations récentes
-    if not annual.empty:
-        stations_recentes = annual[annual['ANNEE'] == annual['ANNEE'].max()]['NOM_USUEL'].unique()
-        annual = annual[annual['NOM_USUEL'].isin(stations_recentes)].copy()
-    
-    return annual
 
+    if not annual.empty:
+        stations_recentes = annual.loc[
+            annual['ANNEE'] == annual['ANNEE'].max(), 'NOM_USUEL'
+        ].unique()
+        annual = annual[annual['NOM_USUEL'].isin(stations_recentes)]
+
+    return annual
 
 # Charger les données
 annual = load_meteo(deps)
